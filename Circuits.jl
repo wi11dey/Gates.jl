@@ -232,4 +232,6 @@ substitute(expression::SymbolicInteger,
            substitutions...) =
                SymbolicInteger(substitute.(expression.bits, Ref(memoized); substitutions...))
 
+include("bristol.jl")
+
 end
