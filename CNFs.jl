@@ -8,9 +8,8 @@ struct CNF
     clauses::Matrix{Int}
     inputs::Dict{Symbol,AbstractDict{Int,Int}}
     size::Int
-    last_input_variable::Int
 end
-CNF(cnf::CNF) = CNF(Matrix(cnf.clauses), Dict(cnf.inputs), cnf.size, cnf.last_input_variable)
+CNF(cnf::CNF) = CNF(Matrix(cnf.clauses), Dict(cnf.inputs), cnf.size)
 
 "Tseytin transformation into 3CNF."
 function CNF(x::Gate)
@@ -86,8 +85,7 @@ function deduplicate!(cnf::CNF)
 
     return CNF(cnf.clauses[:, remaining],
                cnf.inputs,
-               cnf.size,
-               cnf.last_input_variable)
+               cnf.size)
 end
 
 "Modify input CNF to remove variables that are not used in any clause, and return a "
@@ -107,15 +105,26 @@ function compress!(cnf::CNF)
 
     return CNF(cnf.clauses,
                cnf.inputs,
-               length(vars),
-               cnf.last_input_variable)
+               length(vars))
+end
+
+"2SAT simplification."
+function simplify(cnf::CNF)
 end
 
 using Random
 
 function Random.shuffle!(rng::AbstractRNG, cnf::CNF)::CNF
+    remap = Dict(zip(1:cnf.size, randperm(rng, cnf.size)))
+    replace!(cnf.clauses, remap...)
+    map!(values(cnf.inputs)) do input
+        map!(v -> remap[v], values(convert(Dict, input)))
+    end
+
     shuffle!.(rng, eachcol(cnf.clauses))
+
     cnf.clauses .= cnf.clauses[:, randperm(rng, size(cnf.clauses, 2))]
+
     return cnf
 end
 
