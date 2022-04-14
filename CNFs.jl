@@ -60,7 +60,7 @@ function CNF(x::Gate)
         i += size
     end
     inputs[gatesym] = i:i + length(gates) - 1
-    clauses = map(v -> isnothing(v) ? 0 : (v.second ? 1 : -1)*(inputs[v.first.name].start + v.first.bit - 1), reshape(flat_clauses, 3, :))
+    clauses = map(v -> isnothing(v) ? 0 : (v.second ? 1 : -1)*inputs[v.first.name][v.first.bit], reshape(flat_clauses, 3, :))
     delete!(inputs, gatesym)
 
     return CNF(clauses, inputs, i + length(gates) - 1, i - 1)
