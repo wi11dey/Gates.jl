@@ -95,9 +95,6 @@ function compress!(cnf::CNF)
     vars = abs.(vec(cnf.clauses))
     pushfirst!(vars, 0)
     sort!(vars)
-    while first(vars) <= cnf.last_input_variable
-        popfirst!(vars)
-    end
     unique!(vars)
     popfirst!(vars)
     remap = Dict(Iterators.flatten(zip(vars, eachindex(vars)),
