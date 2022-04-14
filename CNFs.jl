@@ -6,7 +6,7 @@ using ..Circuits
 
 struct CNF
     clauses::Matrix{Int}
-    inputs::Dict{Symbol,UnitRange{Int}}
+    inputs::Dict{Symbol,AbstractDict{Int,Int}}
     size::Int
     last_input_variable::Int
 end
@@ -53,17 +53,65 @@ function CNF(x::Gate)
 
     push!(flat_clauses, walk(x) => true, nothing, nothing)
 
-    inputs = Dict{Symbol,UnitRange{Int}}()
+    inputs = Dict{Symbol,AbstractDict{Int,Int}}()
     i = 1
     for (input, size) in sizes
-        inputs[input] = i:i + size - 1
+        inputs[input] = pairs(i:i + size - 1)
         i += size
     end
-    inputs[gatesym] = i:i + length(gates) - 1
+    inputs[gatesym] = pairs(i:i + length(gates) - 1)
     clauses = map(v -> isnothing(v) ? 0 : (v.second ? 1 : -1)*inputs[v.first.name][v.first.bit], reshape(flat_clauses, 3, :))
     delete!(inputs, gatesym)
 
     return CNF(clauses, inputs, i + length(gates) - 1, i - 1)
+end
+
+"""
+Removes repeated variables in the same clause.
+
+Modifies input CNF to remove repeated literals, and additionally returns a new CNF with no repeated literals and no trivially true clauses (with A ∨ ¬A).
+"""
+function deduplicate!(cnf::CNF)
+    clauses = eachcol(cnf.clauses)
+    remaining = trues(length(clauses))
+    for (i, clause) in enumerate(clauses),
+        (j, var) in enumerate(clause)
+        rest = @view clause[j + 1:end]
+        if -var in rest
+            remaining[i] = false
+            continue
+        end
+        replace!(rest, var=>0)
+    end
+
+    return CNF(cnf.clauses[:, remaining],
+               cnf.inputs,
+               cnf.size,
+               cnf.last_input_variable)
+end
+
+"Modify input CNF to remove variables that are not used in any clause, and return a "
+function compress!(cnf::CNF)
+    vars = abs.(vec(cnf.clauses))
+    pushfirst!(vars, 0)
+    sort!(vars)
+    while first(vars) <= cnf.last_input_variable
+        popfirst!(vars)
+    end
+    unique!(vars)
+    popfirst!(vars)
+    remap = Dict(Iterators.flatten(zip(vars, eachindex(vars)),
+                                   Iterators.map(.-, zip(vars, eachindex(vars)))))
+    replace!(cnf.clauses, remap...)
+
+    map!(values(cnf.inputs)) do input
+        filter!(pair -> pair.second !== 0, map!(v -> get(remap, v, 0), values(convert(Dict, input))))
+    end
+
+    return CNF(cnf.clauses,
+               cnf.inputs,
+               length(vars),
+               cnf.last_input_variable)
 end
 
 using Random
