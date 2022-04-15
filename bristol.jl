@@ -13,10 +13,8 @@ function showerror(io::IO, ex::BristolParseError)
     print(io, "BristolParseError: line $ex.line: $ex.msg")
 end
 
-# TODO error handling
 function readbristol(io::IO, inputs::Vector{<:SymbolicInteger})
-    const bristolmap = Dict{String, Type{<:Gate}}("AND" => AndGate, "XOR" => XorGate, "INV" => NotGate)
-    @inline ninputs(::Type{<:Gate{F, N}}) where {F, N} = N
+    const bristolmap = Dict{String, Type{<:Gate}}("AND" => &, "XOR" => ⊻, "INV" => ~)
 
     lines = Iterators.Stateful(eachline(io))
     @inline parseerror(msg::String) = throw(BristolParseError(lines.taken, msg))
@@ -90,18 +88,10 @@ function readbristol(io::IO, inputs::Vector{<:SymbolicInteger})
                 continue
             end
 
-            try
-                gatetype = bristolmap[gate]
-            catch e
-                if e isa KeyError
-                    parseerror("unknown gate $gate")
-                else
-                    rethrow(e)
-                end
+            f = get(bristolmap, gate) do
+                parseerror("unknown gate $gate")
             end
-            gateinputs = ninputs(gatetype)
-            parameters[1] == gateinputs || parseerror("expected $gateinputs inputs from $gate gate, got $(parameters[1])")
-            wires[parameters[end]] = gatetype(getindex.(Ref(wires), parameters[3:3 + in - 1])...)
+            wires[parameters[end]] = f(getindex.(Ref(wires), parameters[3:3 + parameters[1] - 1])...)
         end
     catch e
         if e isa KeyError
@@ -112,6 +102,8 @@ function readbristol(io::IO, inputs::Vector{<:SymbolicInteger})
             parseerror("too few parameters")
         elseif e isa DimensionMismatch
             parseerror("mismatched number of inputs and outputs")
+        elseif e isa MethodError
+            parseerror("wrong number of inputs")
         else
             rethrow(e)
         end
@@ -120,15 +112,9 @@ function readbristol(io::IO, inputs::Vector{<:SymbolicInteger})
     # Output:
     i = length(wires)
     outputs = SymbolicInteger[]
-    try
-        for S in Iterators.reverse(outwires)
-            outputs.pushfirst!(SymbolicInteger{S}((getindex.(Ref(wires), i - S:i)...,)))
-            i -= S
-        end
-    catch e
-        if e isa KeyError
-            parseerror("not enough wires for outputs")
-        end
+    for bits in Iterators.reverse(outwires)
+        outputs.pushfirst!(SymbolicInteger{bits}(ntuple(j -> get(() -> parseerror("not enough wires for outputs"), wires, i - bits + j), bits)))
+        i -= bits
     end
     return outputs
 end

@@ -4,71 +4,75 @@ export CNF
 
 using ..Circuits
 
-struct CNF
+mutable struct CNF
     clauses::Matrix{Int}
-    inputs::Dict{Symbol,AbstractDict{Int,Int}}
+    inputs::Dict{Symbol,Dict{Int,Int}}
     size::Int
 end
 CNF(cnf::CNF) = CNF(Matrix(cnf.clauses), Dict(cnf.inputs), cnf.size)
 
 "Tseytin transformation into 3CNF."
 function CNF(x::Gate)
-    flat_clauses = Vector{Union{Pair{BoolVariable,Bool},Nothing}}()
+    flat_clauses = Int[]
+    wires = IdDict{SymbolicBool,Int}()
+    inputs = Dict{Symbol,Dict{Int,Int}}()
 
-    tseytin(::NotGate, c, a)    = (push!(flat_clauses,
-                                         a => false, c => false, nothing,
-                                         a => true,  c => true,  nothing);
-                                   c)
-    tseytin(::AndGate, c, a, b) = (push!(flat_clauses,
-                                         a => false, b => false, c => true,
-                                         a => true,  c => false, nothing,
-                                         b => true,  c => false, nothing);
-                                   c)
-    tseytin(::OrGate, c, a, b)  = (push!(flat_clauses,
-                                         a => true,  b => true,  c => false,
-                                         a => false, c => true,  nothing,
-                                         b => false, c => true,  nothing);
-                                   c)
-    tseytin(::XorGate, c, a, b) = (push!(flat_clauses,
-                                         a => false, b => false, c => false,
-                                         a => true,  b => true,  c => false,
-                                         a => true,  b => false, c => true,
-                                         a => false, b => true,  c => true);
-                                   c)
-
-    sizes = Dict{Symbol,Int}()
-    gates = WeakKeyDict{Gate,BoolVariable}()
-    @gensym gatesym
-
-    walk(x::BoolVariable) = (sizes[x.name] = max(get(sizes, x.name, 1), x.bit); x)
-    function walk(gate::Gate)
-        result = get(gates, gate, missing)
-        if ismissing(result)
-            walked = walk.(gate.inputs)
-            result = gates[gate] = tseytin(gate, BoolVariable(gatesym, length(gates) + 1), walked...)
-        end
-        return result
+    walk(x::BoolVariable) = get!(wires, x) do
+        get!(inputs, x.name, Dict{Int,Int}())[x.bit] = length(wires) + 1
+    end
+    walk(gate::Gate) = get!(wires, gate) do
+        walked = walk.(gate.inputs)
+        c = length(wires) + 1
+        tseytin(::NotGate, a)    = push!(flat_clauses,
+                                         -a, -c, 0,
+                                         a,   c, 0)
+        tseytin(::AndGate, a, b) = push!(flat_clauses,
+                                         -a, -b, c,
+                                         a,  -c, 0,
+                                         b,  -c, 0)
+        tseytin(::OrGate, a, b)  = push!(flat_clauses,
+                                         a,  b, -c,
+                                         -a, c,  0,
+                                         -b, c,  0)
+        tseytin(::XorGate, a, b) = push!(flat_clauses,
+                                         -a, -b, -c,
+                                         a,   b, -c,
+                                         a,  -b,  c,
+                                         -a,  b,  c)
+        tseytin(gate, walked...)
     end
 
-    push!(flat_clauses, walk(x) => true, nothing, nothing)
+    push!(flat_clauses, walk(x), 0, 0)
 
-    inputs = Dict{Symbol,AbstractDict{Int,Int}}()
-    i = 1
-    for (input, size) in sizes
-        inputs[input] = pairs(i:i + size - 1)
-        i += size
+    return CNF(reshape(flat_clauses, 3, :), inputs, length(wires))
+end
+
+function map!(f, cnf::CNF)
+    map!(v -> copysign(f(abs(v)), v), cnf.clauses)
+    map!(input -> map!(f, values(input)), values(cnf.inputs))
+    return cnf
+end
+
+"Modify input CNF to remove variables that are not used in any clause."
+function compress!(cnf::CNF)
+    vars = abs.(vec(cnf.clauses))
+    sort!(vars)
+    pushfirst!(vars, 0)
+    unique!(vars)
+    popfirst!(vars)
+    remapping = Dict(zip(vars, eachindex(vars)))
+    map!(v -> get(remapping, v, zero(v)), cnf)
+    map!(values(cnf.inputs)) do input
+        filter!(pair -> !iszero(pair.second), input)
     end
-    inputs[gatesym] = pairs(i:i + length(gates) - 1)
-    clauses = map(v -> isnothing(v) ? 0 : (v.second ? 1 : -1)*inputs[v.first.name][v.first.bit], reshape(flat_clauses, 3, :))
-    delete!(inputs, gatesym)
 
-    return CNF(clauses, inputs, i + length(gates) - 1, i - 1)
+    cnf.size = length(vars)
+
+    return cnf
 end
 
 """
 Removes repeated variables in the same clause.
-
-Modifies input CNF to remove repeated literals, and additionally returns a new CNF with no repeated literals and no trivially true clauses (with A ∨ ¬A).
 """
 function deduplicate!(cnf::CNF)
     clauses = eachcol(cnf.clauses)
@@ -80,32 +84,12 @@ function deduplicate!(cnf::CNF)
             remaining[i] = false
             continue
         end
-        replace!(rest, var=>0)
+        replace!(rest, var => 0)
     end
 
-    return CNF(cnf.clauses[:, remaining],
-               cnf.inputs,
-               cnf.size)
-end
+    cnf.clauses = cnf.clauses[:, remaining]
 
-"Modify input CNF to remove variables that are not used in any clause, and return a "
-function compress!(cnf::CNF)
-    vars = abs.(vec(cnf.clauses))
-    pushfirst!(vars, 0)
-    sort!(vars)
-    unique!(vars)
-    popfirst!(vars)
-    remap = Dict(Iterators.flatten(zip(vars, eachindex(vars)),
-                                   Iterators.map(.-, zip(vars, eachindex(vars)))))
-    replace!(cnf.clauses, remap...)
-
-    map!(values(cnf.inputs)) do input
-        filter!(pair -> pair.second !== 0, map!(v -> get(remap, v, 0), values(convert(Dict, input))))
-    end
-
-    return CNF(cnf.clauses,
-               cnf.inputs,
-               length(vars))
+    return cnf
 end
 
 "2SAT simplification."
@@ -114,17 +98,11 @@ end
 
 using Random
 
-function Random.shuffle!(rng::AbstractRNG, cnf::CNF)::CNF
-    remap = Dict(zip(1:cnf.size, randperm(rng, cnf.size)))
-    replace!(cnf.clauses, remap...)
-    map!(values(cnf.inputs)) do input
-        map!(v -> remap[v], values(convert(Dict, input)))
-    end
-
+function Random.shuffle!(rng::AbstractRNG, cnf::CNF)
+    perm = randperm(rng, cnf.size)
+    map!(v -> perm[v], cnf)
     shuffle!.(rng, eachcol(cnf.clauses))
-
     cnf.clauses .= cnf.clauses[:, randperm(rng, size(cnf.clauses, 2))]
-
     return cnf
 end
 
