@@ -62,10 +62,10 @@ function SymbolicInteger{A}(x::SymbolicInteger{B}) where {A, B}
     elseif B === A
         return x
     else
-        return SymbolicInteger{A}((x.bits..., ntuple(i -> false, A - B)...))
+        return SymbolicInteger{A}((x.bits..., ntuple(i -> false, Val(A - B))...))
     end
 end
-SymbolicInteger{S}(x::Symbol) where S = SymbolicInteger{S}(ntuple(i -> BoolVariable(x, i), S))
+SymbolicInteger{S}(x::Symbol) where S = SymbolicInteger{S}(ntuple(i -> BoolVariable(x, i), Val(S)))
 function SymbolicInteger{S}(x::Unsigned) where S
     8sizeof(x) - leading_zeros(x) > S && throw(InexactError(:SymbolicInteger, SymbolicInteger{S}, x))
 
@@ -91,8 +91,8 @@ Base.sizeof(::SymbolicInteger{S}) where S = sizeof(SymbolicInteger{S})
 
 Base.ndigits(::SymbolicInteger{S}; base::Integer=10, pad::Integer=1) where S = max(pad, base === 2 ? S : ceil(Int, S/log2(base)))
 
-Base.zero(::Type{SymbolicInteger{S}}) where S = SymbolicInteger{S}(ntuple(i -> false, S))
-Base.one( ::Type{SymbolicInteger{S}}) where S = SymbolicInteger{S}(ntuple(i -> i == 1, S))
+Base.zero(::Type{SymbolicInteger{S}}) where S = SymbolicInteger{S}(ntuple(i -> false,  Val(S)))
+Base.one( ::Type{SymbolicInteger{S}}) where S = SymbolicInteger{S}(ntuple(i -> i == 1, Val(S)))
 Base.zero(x::SymbolicInteger) = zero(typeof(x))
 Base.one( x::SymbolicInteger) =  one(typeof(x))
 
@@ -102,9 +102,9 @@ Base.trailing_zeros(x::SymbolicInteger{S}) where S =     findfirst(bit -> bit !=
 Base.trailing_ones( x::SymbolicInteger{S}) where S =     findfirst(bit -> bit !== true,  x.bits) - 1
 
 Base.bitrotate(x::SymbolicInteger{S}, k::Integer) where S =
-    k != 0 ? SymbolicInteger{S}(ntuple(i -> @inbounds(x.bits[mod1(i - k, S)]), S)) : x
+    k != 0 ? SymbolicInteger{S}(ntuple(i -> @inbounds(x.bits[mod1(i - k, S)]), Val(S))) : x
 <<(x::SymbolicInteger{S}, k::Int) where S =
-    k != 0 ? SymbolicInteger{S}(ntuple(i -> 1 <= i - k <= S && @inbounds(x.bits[i - k]), S)) : x
+    k != 0 ? SymbolicInteger{S}(ntuple(i -> 1 <= i - k <= S && @inbounds(x.bits[i - k]), Val(S))) : x
 >>(x::SymbolicInteger, k::Int) = x << -k
 >>>(x::SymbolicInteger, k::Int) = x >> k
 
@@ -130,7 +130,7 @@ function +(x::SymbolicInteger{S}, y::SymbolicInteger{S})::SymbolicInteger{S} whe
 end
 
 *(a::SymbolicInteger{A}, b::SymbolicInteger{B}) where {A, B} =
-    sum(SymbolicInteger{A + B}(ntuple(j -> 1 <= j - i + 1 <= A && @inbounds(b.bits[i]) & @inbounds(a.bits[j - i + 1]), A + B)) for i = 1:B) # TODO: can be parallelized
+    sum(SymbolicInteger{A + B}(ntuple(j -> 1 <= j - i + 1 <= A && @inbounds(b.bits[i]) & @inbounds(a.bits[j - i + 1]), Val(A + B))) for i = 1:B) # TODO: can be parallelized
 
 "Two's complement."
 -(x::SymbolicInteger) = ~x + oneunit(x)
