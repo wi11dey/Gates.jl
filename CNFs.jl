@@ -9,7 +9,11 @@ mutable struct CNF
     inputs::Dict{Symbol,Dict{Int,Int}}
     size::Int
 end
-CNF(cnf::CNF) = CNF(Matrix(cnf.clauses), Dict(cnf.inputs), cnf.size)
+function Bool(cnf::CNF)
+    length(cnf.clauses) == 0 && return true
+    any(all.(iszero, eachcol(cnf.clauses))) && return false
+    throw(InexactError(:Bool, Bool, cnf))
+end
 
 "Tseytin transformation into 3CNF."
 function CNF(x::Gate)
@@ -47,7 +51,7 @@ function CNF(x::Gate)
     return CNF(reshape(flat_clauses, 3, :), inputs, length(wires))
 end
 
-function map!(f, cnf::CNF)
+function Base.map!(f, cnf::CNF)
     map!(v -> copysign(f(abs(v)), v), cnf.clauses)
     map!(input -> map!(f, values(input)), values(cnf.inputs))
     return cnf
@@ -71,9 +75,7 @@ function compress!(cnf::CNF)
     return cnf
 end
 
-"""
-Removes repeated variables in the same clause.
-"""
+"Removes repeated variables in the same clause."
 function deduplicate!(cnf::CNF)
     clauses = eachcol(cnf.clauses)
     remaining = trues(length(clauses))
@@ -89,11 +91,65 @@ function deduplicate!(cnf::CNF)
 
     cnf.clauses = cnf.clauses[:, remaining]
 
+    if length(cnf.clauses) == 0
+        empty!(cnf.inputs)
+        cnf.size = 0
+    end
+
     return cnf
 end
 
-"2SAT simplification."
-function simplify(cnf::CNF)
+function simplify!(cnf::CNF)
+    deduplicate!(cnf)
+
+    locations = Dict{Int,Vector{CartesianIndex}}()
+    for (location, v) in pairs(IndexCartesian(), cnf.clauses)
+        v != 0 || continue
+        push!(get!(locations, v, CartesianIndex[]), location)
+    end
+
+    remaining = trues(length(clauses))
+    assignments = Dict{Int,Bool}()
+    Base.@propagate_inbounds function dfs(clause::Int)
+        v = 0
+        for w in @view cnf.clauses[:, clause]
+            w != 0 || continue
+            v == 0 || return true
+            v = w
+        end
+        v != 0 || return false
+        get!(assignments, abs(v), v > 0) == (v > 0) || return false
+        remaining[getindex.(locations[v], 1)] .= false
+        for i in locations[-v]
+            col = i[1]
+            remaining[col] || continue
+            cnf.clauses[i] = 0
+            dfs(col) || return false
+        end
+        return true
+    end
+    @inbounds for i = axes(cnf.clauses, 2)
+        remaining[i] || continue
+        if !dfs(i)
+            cnf.clauses = zeros(Int, 1, 1)
+            empty!(cnf.inputs)
+            cnf.size = 0
+            return cnf, Dict{BoolVariable,Bool}()
+        end
+    end
+    cnf.clauses = cnf.clauses[:, remaining]
+
+    partial = Dict{BoolVariable,Bool}()
+    for (name, bits) in cnf.inputs,
+        (bit, v) in bits
+        assignment = get(assignments, v, missing)
+        !ismissing(assignment) || continue
+        partial[BoolVariable(name, bit)] = assignment
+    end
+
+    compress!(cnf)
+
+    return cnf, partial
 end
 
 using Random
