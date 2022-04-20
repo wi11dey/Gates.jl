@@ -61,7 +61,7 @@ function readbristol(io::IO, inputs::Vector{<:SymbolicInteger})
     end
 
     # Parse circuit:
-    wires = Dict{Int, BoolVariable}(zip(Iterators.countfrom(0), Iterators.flatten(getfield.(inputs, :bits))))
+    wires = Dict{Int, BoolExpression}(zip(Iterators.countfrom(0), Iterators.flatten(getfield.(inputs, :bits))))
     try
         for line in Iterators.dropwhile(isempty, lines)
             tokens = split(line)
