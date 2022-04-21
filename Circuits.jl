@@ -11,11 +11,10 @@ end
 Base.show(io::IO, x::BoolVariable) = print(io, x.name, "_", x.bit)
 
 mutable struct Gate{F, N} # mutability is only to avoid copying
-    inputs::NTuple{N, Union{Gate,BoolVariable}}
+    const inputs::NTuple{N, Union{Gate,BoolVariable}}
 
     Gate{F, N}(inputs::Vararg{Union{Gate,BoolVariable}, N}) where {F, N} = new{F, N}(inputs)
 end
-Base.setproperty!(x::Gate, f::Symbol, v) = error("Gates should not be modified")
 # TODO: fix pretty-printing
 function Base.show(io::IO, x::Gate)
     exprify(x) = x
