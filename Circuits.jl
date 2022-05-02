@@ -4,18 +4,20 @@ export BoolVariable, Gate, NotGate, AndGate, OrGate, XorGate, SymbolicInteger, s
 
 import Base: +, -, *, ==, <<, >>, >>>, ~, &, |, xor
 
+"Basic symbolic unit, representing a specific bit of a named variable."
 struct BoolVariable
     name::Symbol
     bit::Int
 end
 Base.show(io::IO, x::BoolVariable) = print(io, x.name, "_", x.bit)
 
-mutable struct Gate{F, N} # mutability is only to avoid copying
+"A generate logic gate which takes N inputs and produces 1 output, using the function F."
+mutable struct Gate{F, N} # Mutability is only to avoid copying.
     const inputs::NTuple{N, Union{Gate,BoolVariable}}
 
     Gate{F, N}(inputs::Vararg{Union{Gate,BoolVariable}, N}) where {F, N} = new{F, N}(inputs)
 end
-# TODO: fix pretty-printing
+# TODO: improve pretty-printing
 function Base.show(io::IO, x::Gate)
     exprify(x) = x
     exprify(@nospecialize x::Gate{F}) where F = Expr(:call, Symbol(F), exprify.(x.inputs)...)
@@ -23,19 +25,26 @@ function Base.show(io::IO, x::Gate)
     print(io, exprify(x))
 end
 
+"Convenience definitions for common gate types."
 const NotGate = Gate{~, 1}
 const AndGate = Gate{&, 2}
 const OrGate  = Gate{|, 2}
 const XorGate = Gate{⊻, 2}
 
+"Convert a gate to a GraphViz DOT diagram of the circuit the gate represents."
 function Base.show(io::IO, ::MIME"text/vnd.graphviz", x::Gate)
     print(io, "digraph Gates {")
     print(io, "}")
 end
 
+"Any boolean value that is not yet known."
 const SymbolicBool = Union{Gate, BoolVariable}
+"An expression that is guaranteed to evaluate to a boolean. May literally be true or false as well."
 const BoolExpression = Union{Bool, SymbolicBool}
 Base.convert(::Type{BoolExpression}, x::Int) = Bool(x)
+
+# Definitions of logic operators on BoolExpressions as gates.
+# The difference between using the operator versus the Gate constructor directly is that the operator may not always return a gate, in case one or both inputs are already known (short-circuiting).
 
 ~(x::BoolExpression) = NotGate(x)
 ~(x::NotGate) = x.inputs[1] # Double-negative
@@ -52,7 +61,7 @@ xor(x::BoolExpression, y::BoolExpression) = XorGate(x, y)
 xor(x::Bool, y::SymbolicBool) = x ? ~y : y # Short circuit
 xor(x::SymbolicBool, y::Bool) = y ⊻ x
 
-"Little-endian."
+"Little-endian collection of BoolExpressions that together represent the bits of an unsigned integer of width S."
 struct SymbolicInteger{S} <: Unsigned
     bits::NTuple{S, BoolExpression}
 end
@@ -78,11 +87,12 @@ function Base.show(io::IO, x::SymbolicInteger{S}) where S
     try
         print(io, typeof(x), "(0x", string(Unsigned(x), base=16, pad=cld(S, 4)), ")")
     catch
-        # TODO: fix pretty-printing
+        # TODO: improve pretty-printing
         print(io, x.bits)
     end
 end
 
+# When dealing with multiple SymbolicIntegers, promote to the largest width to avoid losing any information.
 Base.promote_rule(::Type{SymbolicInteger{A}}, ::Type{SymbolicInteger{B}}) where {A, B}             = SymbolicInteger{max(A, B)}
 Base.promote_rule(::Type{SymbolicInteger{A}}, ::Type{B}                 ) where {A, B <: Unsigned} = SymbolicInteger{max(A, 8sizeof(B))}
 

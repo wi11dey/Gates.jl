@@ -13,6 +13,7 @@ function showerror(io::IO, ex::BristolParseError)
     print(io, "BristolParseError: line $ex.line: $ex.msg")
 end
 
+"Read pre-made circuits in the Bristol format/fashion."
 function readbristol(io::IO, inputs::Vector{<:SymbolicInteger})
     const bristolmap = Dict{String, Type{<:Gate}}("AND" => &, "XOR" => ⊻, "INV" => ~)
 

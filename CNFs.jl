@@ -99,6 +99,7 @@ function deduplicate!(cnf::CNF)
     return cnf
 end
 
+"Simplification procedure I generalized from the 2SAT satisfiability algorithm. Guaranteed to solve instand"
 function simplify!(cnf::CNF)
     deduplicate!(cnf)
 
