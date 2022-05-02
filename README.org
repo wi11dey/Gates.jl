@@ -1,0 +1,27 @@
+#+title: Circuits.jl
+
+A fast circuit compiler that can seamlessly integrate with existing Julia code and can incrementally build up expressions and regenerate optimized circuits after substitutions and manipulations using standard Julia functions. A number of common logical transformations are also supported. See [[https://github.com/wi11dey/Circuits.jl/blob/master/SHA256.jl][SHA256.jl]] for SHA-2 implementation which can be compiled to a circuit and functionally encrypted or transformed to conjunctive normal form for obfuscation for simplification.
+
+Additionally, interoperable with circuits in the widely-used [[https://homes.esat.kuleuven.be/~nsmart/MPC][Bristol format]] (see [[https://github.com/wi11dey/Circuits.jl/blob/master/bristol.jl][bristol.jl]]).
+
+* Transformations supported
+- [[https://en.wikipedia.org/wiki/Tseytin_transformation][Tseytin transformation]] to Conjunctive Normal Form
+- Intra-clause variable de-duplication
+- Dead variable removal
+- Circuit randomization
+* Example
+#+begin_src julia
+using Circuits
+using CNFs
+
+import SHA256: sha256
+
+a = SymbolicInteger{64}(:a)
+circuit = sha256([a])
+
+@show cnfs = CNF.(circuit.bits)
+
+@show simplify!.(cnfs)
+
+@show substitue(circuit, a=0x010101)
+#+end_src
