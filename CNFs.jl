@@ -2,7 +2,7 @@ module CNFs
 
 export CNF
 
-using ..Circuits
+using ..Gates
 
 mutable struct CNF
     clauses::Matrix{Int}
@@ -18,7 +18,7 @@ end
 "Tseytin transformation into 3CNF."
 function CNF(x::Gate)
     flat_clauses = Int[]
-    wires = IdDict{SymbolicBool,Int}()
+    wires = IdDict{Gates.SymbolicBool,Int}()
     inputs = Dict{Symbol,Dict{Int,Int}}()
 
     walk(x::BoolVariable) = get!(wires, x) do
@@ -44,11 +44,21 @@ function CNF(x::Gate)
                                          a,  -b,  c,
                                          -a,  b,  c)
         tseytin(gate, walked...)
+        c
     end
 
     push!(flat_clauses, walk(x), 0, 0)
 
     return CNF(reshape(flat_clauses, 3, :), inputs, length(wires))
+end
+
+function Base.show(io::IO, ::MIME"text/plain", cnf::CNF)
+    println(io, size(cnf.clauses, 2), "-clause, ", cnf.size, "-literal CNF:")
+    buffer = IOBuffer()
+    Base.print_matrix(IOContext(buffer), cnf.clauses', "", " ∨ ")
+    seek(buffer, 0)
+    join(io, (" ($clause)" for clause in eachline(buffer)), " ∧\n")
+    close(buffer)
 end
 
 function Base.map!(f, cnf::CNF)

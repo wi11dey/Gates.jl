@@ -1,6 +1,6 @@
-module Circuits
+module Gates
 
-export BoolVariable, Gate, NotGate, AndGate, OrGate, XorGate, SymbolicInteger, substitute
+export BoolVariable, Gate, NotGate, AndGate, OrGate, XorGate, BoolExpression, @ints, SymbolicInteger, substitute
 
 import Base: +, -, *, ==, <<, >>, >>>, ~, &, |, xor
 
@@ -9,20 +9,16 @@ struct BoolVariable
     name::Symbol
     bit::Int
 end
-Base.show(io::IO, x::BoolVariable) = print(io, x.name, "_", x.bit)
+Base.show(io::IO, ::MIME"text/latex", x::BoolVariable) = print(io, x.name, "_", x.bit)
+const subscripts = collect("₀₁₂₃₄₅₆₇₈₉")
+Base.show(io::IO, ::MIME"text/plain", x::BoolVariable) = print(io, x.name, subscripts[reverse!(digits(x.bit)) .+ 1]...)
+Base.isless(x::BoolVariable, y::BoolVariable) = x.name == y.name ? isless(x.bit, y.bit) : isless(x.name, y.name)
 
-"A generate logic gate which takes N inputs and produces 1 output, using the function F."
+"A logic gate which takes N inputs and produces 1 output, using the function F."
 mutable struct Gate{F, N} # Mutability is only to avoid copying.
     const inputs::NTuple{N, Union{Gate,BoolVariable}}
 
     Gate{F, N}(inputs::Vararg{Union{Gate,BoolVariable}, N}) where {F, N} = new{F, N}(inputs)
-end
-# TODO: improve pretty-printing
-function Base.show(io::IO, x::Gate)
-    exprify(x) = x
-    exprify(@nospecialize x::Gate{F}) where F = Expr(:call, Symbol(F), exprify.(x.inputs)...)
-
-    print(io, exprify(x))
 end
 
 "Convenience definitions for common gate types."
@@ -31,10 +27,50 @@ const AndGate = Gate{&, 2}
 const OrGate  = Gate{|, 2}
 const XorGate = Gate{⊻, 2}
 
+function Base.show(io::IO, mime::MIME"text/plain", x::Gate)
+    first = true
+    precedence = typemax(Int)
+    function output(operator::Symbol, x::Gate)
+        was_first = first
+        first = false
+        old_precedence = precedence
+        precedence = Base.operator_precedence(operator)
+        if Base.isunaryoperator(operator)
+            print(io, operator)
+            output(x.inputs[1])
+            return
+        end
+        if precedence < old_precedence && !was_first
+            print(io, "(")
+        end
+        output(x.inputs[1])
+        if precedence < 12
+            print(io, " ")
+        end
+        print(io, operator)
+        if precedence < 12
+            print(io, " ")
+        end
+        output(x.inputs[2])
+        if precedence < old_precedence && !was_first
+            print(io, ")")
+        end
+        precedence = old_precedence
+    end
+    output(x::NotGate) = output(:¬, x)
+    output(x::AndGate) = output(:∧, x)
+    output(x::OrGate ) = output(:∨, x)
+    output(x::XorGate) = output(:⊻, x)
+    output(x::Union{Bool, BoolVariable}) = show(io, mime, x)
+
+    output(x)
+end
+
 "Convert a gate to a GraphViz DOT diagram of the circuit the gate represents."
 function Base.show(io::IO, ::MIME"text/vnd.graphviz", x::Gate)
-    print(io, "digraph Gates {")
-    print(io, "}")
+    println(io, "digraph {")
+    println(io, "    rankdir=\"LR\";")
+    println(io, "}")
 end
 
 "Any boolean value that is not yet known."
@@ -83,13 +119,48 @@ end
 (::Type{SymbolicInteger})(@nospecialize x::SymbolicInteger) = x
 (::Type{SymbolicInteger})(x::Unsigned) = SymbolicInteger{8sizeof(x)}(x)
 
-function Base.show(io::IO, x::SymbolicInteger{S}) where S
+"Alternate syntax to access the i-th bit of x, since getindex is already used by all Numbers."
+(x::SymbolicInteger)(i::Int) = x.bits[i]
+
+function Base.show(io::IO, ::MIME"text/plain", x::SymbolicInteger{S}) where S
     try
         print(io, typeof(x), "(0x", string(Unsigned(x), base=16, pad=cld(S, 4)), ")")
     catch
-        # TODO: improve pretty-printing
-        print(io, x.bits)
+        matrix = collect(x.bits)
+        pre = " "
+        if get(io, :compact, false)
+            matrix = reshape(matrix, 1, :)
+            pre = ""
+        else
+            println(io, S, "-bit SymbolicInteger:")
+        end
+        Base.print_matrix(io, matrix, pre)
     end
+end
+Base.show(io::IO, x::SymbolicInteger) = show(IOContext(io, :compact => true), MIME("text/plain"), x)
+
+macro ints(declarations...)
+    function declare(declaration)
+        if !Meta.isexpr(declaration, :(::))
+            error("usage: @symints x::32 y::5 to define x = SymbolicInteger{32}(:x); y = SymbolicInteger{5}(:y)")
+        end
+        name, width = declaration.args
+        :($name = SymbolicInteger{$width}($(Meta.quot(name)));)
+    end
+    quote
+        $(declare.(declarations)...)
+        nothing
+    end |> esc
+end
+
+Base.BroadcastStyle(::Type{<:SymbolicInteger}) = Broadcast.Style{SymbolicInteger}()
+Base.BroadcastStyle( ::Broadcast.AbstractArrayStyle{0}, i::Broadcast.Style{SymbolicInteger}) = i
+Base.BroadcastStyle(a::Broadcast.AbstractArrayStyle   ,  ::Broadcast.Style{SymbolicInteger}) = a
+function Base.copy(bc::Broadcast.Broadcasted{Broadcast.Style{SymbolicInteger}})
+    bcf = Broadcast.flatten(bc)
+    bits(x::SymbolicInteger) = x.bits
+    bits(x::Ref) = x
+    SymbolicInteger(convert(Tuple{Vararg{BoolExpression}}, bcf.f.(bits.(bcf.args)...)))
 end
 
 # When dealing with multiple SymbolicIntegers, promote to the largest width to avoid losing any information.
@@ -120,18 +191,18 @@ Base.bitrotate(x::SymbolicInteger{S}, k::Integer) where S =
 
 Base.bitreverse(x::SymbolicInteger{S}) where S = SymbolicInteger{S}(reverse(x.bits))
 
-~(x::SymbolicInteger) = SymbolicInteger((~).(x.bits))
-(&)(x::SymbolicInteger, y::SymbolicInteger) = SymbolicInteger((&).(x.bits, y.bits))
-(|)(x::SymbolicInteger, y::SymbolicInteger) = SymbolicInteger((|).(x.bits, y.bits))
-xor(x::SymbolicInteger, y::SymbolicInteger) = SymbolicInteger(xor.(x.bits, y.bits))
+~(x::SymbolicInteger) = .~x
+(&)(x::SymbolicInteger, y::SymbolicInteger) = x .& y
+(|)(x::SymbolicInteger, y::SymbolicInteger) = x .| y
+xor(x::SymbolicInteger, y::SymbolicInteger) = x .⊻ y
 
-function +(x::SymbolicInteger{S}, y::SymbolicInteger{S})::SymbolicInteger{S} where S
+function +(x::SymbolicInteger{S}, y::SymbolicInteger{S}) where S
     @inline function full_adder(a::BoolExpression, b::BoolExpression, carry_in::BoolExpression)
         a_xor_b = a ⊻ b
         return a_xor_b ⊻ carry_in, (a_xor_b & carry_in) | (a & b)
     end
 
-    sum = fill!(Vector{BoolExpression}(undef, S), false)
+    sum = Vector{BoolExpression}(undef, S)
     carry = false
     for i = 1:S
         @inbounds sum[i], carry = full_adder(x.bits[i], y.bits[i], carry)
@@ -216,32 +287,30 @@ function Base.digits!(given::BitVector, n::SymbolicInteger; base::Int=2)
     return SymbolicBitVector([n.bits[1:min(end, length(given))]..., zeros(Bool, max(0, length(given) - length(n.bits)))...])
 end
 
+substitutions(bits::Pair{BoolVariable}...; names...) =
+    Dict((BoolVariable(name, bit) => substitution
+          for (name, value) in names
+              for (bit, substitution) in enumerate(SymbolicInteger(value).bits))...,
+         bits...)
 function substitute(expression::BoolExpression,
-                    memoized::AbstractDict{Gate, BoolExpression}=WeakKeyDict{Gate, BoolExpression}();
-                    substitutions...)
-    @inline get_bit(x::Integer, bit) = ((x >>> (bit - 1)) & 0b1) != 0b0
-    @inline get_bit(x::SymbolicInteger, bit) = x.bits[bit]
+                    memoized::AbstractDict{Gate, BoolExpression},
+                    bits...;
+                    names...)
+    subs = substitutions(bits...; names...)
 
     walk(x::Bool) = x
-    function walk(x::BoolVariable)
-        substitution = get(substitutions, x.name, missing)
-        return ismissing(substitution) ? x : get_bit(substitution, x.bit)
-    end
-    function walk(gate::Gate{F}) where F
-        result = get(memoized, gate, missing)
-        if ismissing(result)
-            result = memoized[gate] = F(walk.(gate.inputs)...)
-        end
-        return result
+    walk(x::BoolVariable) = get(subs, x, x)
+    walk(gate::Gate{F}) where F = get!(memoized, gate) do
+        F(walk.(gate.inputs)...)
     end
 
     return walk(expression)
 end
-substitute(expression::SymbolicInteger,
-           memoized::AbstractDict{Gate, BoolExpression}=WeakKeyDict{Gate, BoolExpression}();
-           substitutions...) =
-               SymbolicInteger(substitute.(expression.bits, Ref(memoized); substitutions...))
+substitute(expression::SymbolicInteger, memoized::AbstractDict{Gate, BoolExpression}, bits...; names...) =
+    substitute.(expression, Ref(memoized), bits...; names...)
+substitute(expression, bits::Pair{BoolVariable}...; names...) =
+    substitute(expression, WeakKeyDict{Gate, BoolExpression}(), bits...; names...)
 
-include("bristol.jl")
+# include("bristol.jl")
 
 end
