@@ -2,13 +2,13 @@ module ANFs
 
 export ANF
 
-import Base: +, *
-
-    using ..Gates
+import Base: +, *, ==
+using AbstractAlgebra
+using ..Gates
 
 const Term = Set{BoolVariable}
 
-struct ANF
+struct ANF <: MPolyElem{Bool}
     terms::Set{Term}
 end
 ANF(anf::ANF)        = ANF(Set(Set.(anf.terms)))
@@ -27,6 +27,8 @@ function *(a::ANF, b::ANF)
     end
     ANF(product)
 end
+
+==(a::ANF, b::ANF) = a.terms == b.terms
 
 function ANF(x::Gate)
     memoized = WeakKeyDict{Gate, ANF}()

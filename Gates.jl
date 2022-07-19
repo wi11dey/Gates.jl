@@ -9,7 +9,7 @@ struct BoolVariable
     name::Symbol
     bit::Int
 end
-Base.show(io::IO, ::MIME"text/latex", x::BoolVariable) = print(io, x.name, "_", x.bit)
+Base.show(io::IO, ::MIME"text/latex", x::BoolVariable) = print(io, x.name, "_{", x.bit, "}")
 const subscripts = collect("₀₁₂₃₄₅₆₇₈₉")
 Base.show(io::IO, ::MIME"text/plain", x::BoolVariable) = print(io, x.name, subscripts[reverse!(digits(x.bit)) .+ 1]...)
 Base.isless(x::BoolVariable, y::BoolVariable) = x.name == y.name ? isless(x.bit, y.bit) : isless(x.name, y.name)
