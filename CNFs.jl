@@ -173,4 +173,13 @@ function Random.shuffle!(rng::AbstractRNG, cnf::CNF)
     return cnf
 end
 
+import PicoSAT
+
+for f = (:solve, :itersolve)
+    @eval PicoSAT.$f(cnf::CNF; args...) = PicoSAT.$f(Iterators.map(clause -> Iterators.filter(!=(0), clause),
+                                                                   eachcol(cnf.clauses));
+                                                     vars=cnf.size,
+                                                     args...)
+end
+
 end
